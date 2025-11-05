@@ -20,149 +20,89 @@ package app
 import (
 	"context"
 	goflag "flag"
-	"fmt"
-	"net"
-	"net/http"
-	"strconv"
-	"time"
 
-	"github.com/oklog/run"
 	"github.com/spf13/cobra"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"github.com/TencentBlueKing/bk-cmdb/cmd/api_server/options"
 	"github.com/TencentBlueKing/bk-cmdb/cmd/api_server/service"
+	cc "github.com/TencentBlueKing/bk-cmdb/pkg/config-center"
 	"github.com/TencentBlueKing/bk-cmdb/pkg/config-center/config"
-	cerr "github.com/TencentBlueKing/bk-cmdb/pkg/errors"
-	"github.com/TencentBlueKing/bk-cmdb/pkg/i18n"
 	"github.com/TencentBlueKing/bk-cmdb/pkg/log"
-	"github.com/TencentBlueKing/bk-cmdb/pkg/runtime/cli"
-	"github.com/TencentBlueKing/bk-cmdb/pkg/trace"
+	"github.com/TencentBlueKing/bk-cmdb/pkg/runtime/server"
+	sd "github.com/TencentBlueKing/bk-cmdb/pkg/service-discovery"
 )
 
 // NewAPIServerCommand creates a *cobra.Command object with default parameters
 func NewAPIServerCommand() *cobra.Command {
 	opts := options.NewOptions()
-	handlerOpts := log.NewHandlerOptions()
 
 	cmd := &cobra.Command{
 		Use:   "apiserver",
 		Short: "A http service for handle unified http request",
 		RunE: func(c *cobra.Command, args []string) error {
-			// TODO, 后续需求场景可在pkg/runtime同一抽象
-			// 设置服务名称
-			config.SetServiceName(config.ApiServer)
-
-			// 日志初始化
-			if err := handlerOpts.Validate(); err != nil {
-				return err
-			}
-			handler := log.NewContextualHandler(handlerOpts)
-			log.SetDefault(handler)
-
-			// trace初始化
 			ctx := c.Context()
-			opt := new(trace.Option)
-			if err := trace.SetupTrace(ctx, opt); err != nil {
-				return err
-			}
-
-			err := initClients(ctx)
+			svr, err := newApiServer(ctx, opts)
 			if err != nil {
+				log.Error(ctx, "new api server failed", log.E(err), "opt", opts)
 				return err
 			}
 
-			return runHTTPServer(ctx, opts)
+			router, err := svr.service.NewRouter(ctx)
+			if err != nil {
+				log.Error(ctx, "new router failed", log.E(err))
+				return err
+			}
+
+			runOpts := &server.RunOptions{
+				CommonInfo: svr.serverInfo,
+				Registry:   svr.sd,
+				Router:     router,
+				Finalizer:  svr.service.Close,
+			}
+
+			return server.Run(ctx, runOpts)
 		},
 	}
 
 	fs := cmd.Flags()
-	opts.AddFlags(fs)
-	handlerOpts.AddFlags(fs)
+	opts.AddFlags(fs, false)
 	fs.AddGoFlagSet(goflag.CommandLine)
 
 	return cmd
 }
 
-func runHTTPServer(ctx context.Context, opts *options.Options) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var g run.Group
-	router := service.NewRouter()
-	registerTrace(ctx, &g)
-	registerHTTPServer(ctx, &g, router, opts)
-
-	// 监听信号
-	g.Add(func() error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case s := <-cli.SignalChan:
-			log.Warn(ctx, "Signal received", "signal", s)
-			return fmt.Errorf("%w %s received", cli.ErrSignal, s)
-		}
-	}, func(err error) {
-		cancel()
-	})
-
-	// block here
-	return g.Run()
+// apiServer defines the api-server.
+type apiServer struct {
+	serverInfo *server.CommonInfo
+	sd         sd.ServiceDiscovery
+	service    *service.Service
 }
 
-func initClients(ctx context.Context) error {
-	// Todo get option from config
-	m, err := i18n.NewI18nManager(ctx, &i18n.Options{})
-	if err != nil {
-		log.Error(ctx, "init i18n manager failed", log.E(err))
-		return err
+// newApiServer creates a new api-server.
+func newApiServer(ctx context.Context, opts *options.Options) (*apiServer, error) {
+	newSvrOpts := &server.Options{
+		Options:  opts.Options,
+		ConfOpts: &server.ConfigOptions{NeededConfigs: []cc.ConfigType{cc.CommonConfType}},
 	}
-	i18n.SetDefaultManager(m)
+	discServices := []config.ServiceName{config.CoreServer, config.AuthServer, config.AdminServer, config.CDCServer,
+		config.Collector, config.Governancer, config.TaskServer}
 
-	// Todo get from config
-	errorManager := cerr.NewErrorManager()
-	cerr.SetDefaultErrorManager(errorManager)
+	svrInfo, sd, err := server.NewServerInfoWithSvcDisc(ctx, newSvrOpts, discServices)
+	if err != nil {
+		log.Error(ctx, "new common server info failed", log.E(err), "opt", opts)
+		return nil, err
+	}
 
-	return nil
-}
+	// create api service
+	svc, err := service.NewService(ctx, sd, svrInfo.TLSConf, svrInfo.Metrics)
+	if err != nil {
+		log.Error(ctx, "new service failed", log.E(err))
+		return nil, err
+	}
 
-func registerHTTPServer(ctx context.Context, g *run.Group, router http.Handler, opts *options.Options) {
-	addr := net.JoinHostPort(opts.Address, strconv.Itoa(opts.Port))
-
-	h2cHandler := h2c.NewHandler(router, &http2.Server{})
-	svr := http.Server{Addr: addr, Handler: h2cHandler}
-
-	g.Add(func() error {
-		log.Info(ctx, "listening for http requests and metrics", "addr", addr)
-		return svr.ListenAndServe()
-
-	}, func(reason error) {
-		st := time.Now()
-		timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer timeoutCancel()
-
-		if err := svr.Shutdown(timeoutCtx); err != nil {
-			log.Error(ctx, "shutdown http server with error", "reason", reason, "duration", time.Since(st), log.E(err))
-			return
-		}
-		log.Info(ctx, "shutdown http server done", "reason", reason, "duration", time.Since(st))
-	})
-}
-
-func registerTrace(ctx context.Context, g *run.Group) {
-	g.Add(func() error {
-		// block here, wait for sign to shutdown program
-		<-ctx.Done()
-		return nil
-	}, func(reason error) {
-		timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer timeoutCancel()
-
-		if err := trace.Shutdown(timeoutCtx); err != nil {
-			log.Error(ctx, "shutdown trace exporter with error", "reason", reason, log.E(err))
-			return
-		}
-		log.Info(ctx, "shutdown trace exporter done", "reason", reason)
-	})
+	return &apiServer{
+		serverInfo: svrInfo,
+		sd:         sd,
+		service:    svc,
+	}, nil
 }

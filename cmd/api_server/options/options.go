@@ -17,24 +17,21 @@
 // Package options define app runtime option
 package options
 
-import "github.com/spf13/pflag"
+import (
+	"github.com/TencentBlueKing/bk-cmdb/pkg/config-center/config"
+	"github.com/TencentBlueKing/bk-cmdb/pkg/config-center/options"
+)
 
-// Options contains everything necessary to create and run a apiserver server.
+// Options contains everything necessary to create and run api-server.
 type Options struct {
-	Address string
-	Port    int
-}
-
-// AddFlags adds flags to fs and binds them to options.
-func (o *Options) AddFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&o.Address, "address", o.Address, "The IP address on which to listen")
-	fs.IntVar(&o.Port, "port", o.Port, "API listen http/metrics port")
+	*options.Options
 }
 
 // NewOptions returns initialized Options
 func NewOptions() *Options {
+	opt := options.NewOptions(config.ApiServer)
+	opt.Server.HttpPort = 6010
 	return &Options{
-		Address: "0.0.0.0",
-		Port:    8090,
+		Options: opt,
 	}
 }

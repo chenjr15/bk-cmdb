@@ -14,22 +14,24 @@
  * to the current version of the project delivered to anyone in the future.
  */
 
-package cc
+package service
 
-import "context"
+import (
+	"net/http"
 
-// Registry defines config registry related operations.
-type Registry interface {
-	// Write registers config item of specified key to the config center.
-	Write(ctx context.Context, key string, data []byte) error
-	// Delete removes config item of specified key from the config center.
-	Delete(ctx context.Context, key string) error
-}
+	"github.com/go-chi/chi/v5"
 
-// Discovery defines config discovery related operations.
-type Discovery interface {
-	// Read reads config items of specified key from the config center.
-	Read(ctx context.Context, key string) ([]byte, error)
-	// Watch watches config item change events of specified key from the config center.
-	Watch(ctx context.Context, key string) (<-chan DiscoveryEvent, error)
+	"github.com/TencentBlueKing/bk-cmdb/pkg/rest"
+	"github.com/TencentBlueKing/bk-cmdb/pkg/runtime/server/middleware"
+)
+
+// NewRouter creates a new auth-server router.
+func (s *Service) NewRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.ConvHttpMiddleware(s.metric.HTTPMiddleware))
+
+	r.Post("/api/v4/auth/find/resource", rest.Handle(s.PullResource))
+
+	return r
+
 }

@@ -48,6 +48,14 @@ var (
 		INTERNAL:         http.StatusInternalServerError,
 		UNKNOWN:          http.StatusInternalServerError,
 	}
+
+	errCodeStatusMap = map[int]ErrorCode{
+		http.StatusBadRequest:          INVALID_REQUEST,
+		http.StatusUnauthorized:        UNAUTHENTICATED,
+		http.StatusForbidden:           NO_PERMISSION,
+		http.StatusTooManyRequests:     RATELIMIT_EXCEED,
+		http.StatusInternalServerError: INTERNAL,
+	}
 )
 
 // GetHTTPStatus get http status by error code
@@ -56,4 +64,12 @@ func GetHTTPStatus(code ErrorCode) int {
 		return v
 	}
 	return http.StatusBadRequest
+}
+
+// GetErrCodeByHTTPStatus get http status by error code
+func GetErrCodeByHTTPStatus(status int) ErrorCode {
+	if code, ok := errCodeStatusMap[status]; ok {
+		return code
+	}
+	return UNKNOWN
 }

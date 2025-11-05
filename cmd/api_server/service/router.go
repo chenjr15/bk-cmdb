@@ -17,39 +17,35 @@
 package service
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/TencentBlueKing/bk-cmdb/pkg/healthz"
+	"github.com/TencentBlueKing/bk-cmdb/pkg/log"
 	"github.com/TencentBlueKing/bk-cmdb/pkg/rest"
-	"github.com/TencentBlueKing/bk-cmdb/pkg/trace"
+	"github.com/TencentBlueKing/bk-cmdb/pkg/runtime/server/middleware"
 )
 
-// NewRouter ...
-func NewRouter() http.Handler {
+// NewRouter creates a new api-server router.
+func (s *Service) NewRouter(ctx context.Context) (http.Handler, error) {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(trace.Middleware)
 	r.Use(I18nMiddleware)
 
 	r.Use(Authentication) // 统一鉴权中间件
+	r.Use(middleware.ConvHttpMiddleware(s.metric.HTTPMiddleware))
 
-	r.Get("/healthz", healthz.HealthzHandler)
-	r.Get("/-/healthy", healthz.HealthyHandler)
-	r.Get("/-/ready", healthz.ReadyHandler)
+	// register grpc gateway http handlers
+	grpcMux, err := s.newGrpcMux(ctx)
+	if err != nil {
+		log.Error(ctx, "new grpc mux failed", log.E(err), "addr", grpcMux)
+		return nil, err
+	}
+	r.Mount("/", grpcMux)
 
-	// pprof
-	r.Mount("/debug", middleware.Profiler())
+	// register restful http handlers
+	r.Post("/api/v4/user/info", rest.Handle(s.UserInfo))
+	r.Post("/api/v4/authorized/users", rest.Handle(s.ListAuthorizedUsers))
 
-	// metrics 配置
-	r.Get("/metrics", promhttp.Handler().ServeHTTP)
-
-	svr := service{}
-	r.Post("/user/info", rest.Handle(svr.UserInfo))
-
-	return r
+	return r, nil
 }

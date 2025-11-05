@@ -20,9 +20,8 @@ package rest
 import (
 	"context"
 	"net/http"
-	"time"
 
-	cerr "github.com/TencentBlueKing/bk-cmdb/pkg/errors"
+	"github.com/TencentBlueKing/bk-cmdb/pkg/errors"
 	"github.com/TencentBlueKing/bk-cmdb/pkg/kit"
 	"github.com/TencentBlueKing/bk-cmdb/pkg/log"
 )
@@ -41,29 +40,21 @@ type StreamFunc[Req any] func(*Req, StreamingServer) error
 
 // Handle Composable HTTP Handlers using generics
 func Handle[Req, Resp any](fn UnaryFunc[Req, Resp]) func(w http.ResponseWriter, r *http.Request) {
-	handleName := getHandleName(fn)
-
 	f := func(w http.ResponseWriter, r *http.Request) {
-		st := time.Now()
-		var err error
-		defer func() {
-			collectHandleMetrics(handleName, r.Method, st, err)
-		}()
-
 		ctx := r.Context()
 
 		// 反序列化
 		in, err := decodeReq[Req](r)
 		if err != nil {
 			log.Error(ctx, "handle decode request failed", log.E(err))
-			_ = APIError(ctx, cerr.Wrap(cerr.INVALID_REQUEST, err)).Render(w, r)
+			_ = APIError(ctx, cerr.Wrap(cerr.INVALID_REQUEST, err)).Render(w)
 			return
 		}
 
 		// 参数校验
 		if err = validateReq(r.Context(), in); err != nil {
 			log.Error(ctx, "validate req failed", log.E(err))
-			_ = APIError(ctx, cerr.Wrap(cerr.INVALID_REQUEST, err)).Render(w, r)
+			_ = APIError(ctx, cerr.Wrap(cerr.INVALID_REQUEST, err)).Render(w)
 			return
 		}
 
@@ -71,10 +62,11 @@ func Handle[Req, Resp any](fn UnaryFunc[Req, Resp]) func(w http.ResponseWriter, 
 
 		out, respErr := fn(kt, in)
 		if respErr != nil {
-			_ = APIError(ctx, respErr).Render(w, r)
+			_ = APIError(ctx, respErr).Render(w)
+			return
 		}
 
-		_ = APIOK(out).Render(w, r)
+		_ = APIOK(out).Render(w)
 	}
 	return f
 }
@@ -92,29 +84,21 @@ func (s *streamingServer) Context() context.Context {
 
 // Stream Composable HTTP Handlers using generics
 func Stream[Req any](fn StreamFunc[Req]) func(w http.ResponseWriter, r *http.Request) {
-	handleName := getHandleName(fn)
-
 	f := func(w http.ResponseWriter, r *http.Request) {
-		st := time.Now()
-		var err error
-		defer func() {
-			collectHandleMetrics(handleName, r.Method, st, err)
-		}()
-
 		ctx := r.Context()
 
 		// 反序列化
 		in, err := decodeReq[Req](r)
 		if err != nil {
 			log.Error(ctx, "handle decode stream request failed", log.E(err))
-			_ = APIError(ctx, cerr.Wrap(cerr.INVALID_REQUEST, err)).Render(w, r)
+			_ = APIError(ctx, cerr.Wrap(cerr.INVALID_REQUEST, err)).Render(w)
 			return
 		}
 
 		// 参数校验
 		if err = validateReq(r.Context(), in); err != nil {
 			log.Error(ctx, "validate stream req failed", log.E(err))
-			_ = APIError(ctx, cerr.Wrap(cerr.INVALID_REQUEST, err)).Render(w, r)
+			_ = APIError(ctx, cerr.Wrap(cerr.INVALID_REQUEST, err)).Render(w)
 			return
 		}
 
@@ -127,7 +111,7 @@ func Stream[Req any](fn StreamFunc[Req]) func(w http.ResponseWriter, r *http.Req
 		}
 
 		if err := fn(in, svr); err != nil {
-			_ = APIError(ctx, err).Render(w, r)
+			_ = APIError(ctx, err).Render(w)
 			return
 		}
 	}
