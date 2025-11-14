@@ -8,7 +8,7 @@ PROTOC_GEN_GO := $(GOPATH)/bin/protoc-gen-go
 PROTOC_GEN_GO_GRPC := $(GOPATH)/bin/protoc-gen-go-grpc
 PROTOC_GEN_GO_GATEWAY := $(GOPATH)/bin/protoc-gen-go-grpc-gateway
 PROTOC_GEN_OPENAPI := $(GOPATH)/bin/protoc-gen-openapiv2
-GOOGLE_API_DIR := $(GOPATH)/src/github.com/googleapis/googleapis
+GOOGLE_API_DIR := googleapis
 
 # clean previous generated code, install dependencies and generate new code
 .DEFAULT_GOAL := default
@@ -40,8 +40,8 @@ install-tools:
 		go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.27.3; \
 	fi
 	# clone googleapis dependency code
-	@if [ ! -d "$(GOOGLE_API_DIR)" ]; then \
-		git clone https://github.com/googleapis/googleapis.git $(GOOGLE_API_DIR); \
+	@if [ ! -d "$(GOOGLE_API_DIR)/google" ]; then \
+		git submodule update --init --depth=1; \
 	fi
 
 # generate code
